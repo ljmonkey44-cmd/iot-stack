@@ -1,0 +1,8 @@
+# Hesla a tajné údaje
+.env
+mosquitto/config/passwd
+
+# Runtime data
+mosquitto/data/
+mosquitto/log/
+*.log

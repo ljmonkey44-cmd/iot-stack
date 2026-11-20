@@ -1,0 +1,8 @@
+# Každé zařízení smí zapisovat jen do svého topicu,
+# Node-RED smí všechno pod home/ jen číst.
+
+user co2-sensor
+topic write home/co2-sensor/#
+
+user nodered
+topic read home/#
