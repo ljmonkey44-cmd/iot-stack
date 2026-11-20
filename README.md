@@ -4,6 +4,8 @@ Kompletní IoT řetězec od senzoru po dashboard: ESP32 měří CO₂, teplotu a
 posílá je přes MQTT do cloudu, Node-RED je zpracuje a uloží do PostgreSQL
 a Grafana z nich kreslí živé dashboardy.
 
+![Dashboard](docs/dashboard.png)
+
 Celý serverový stack běží v Dockeru na jednom virtuálním serveru (Google Cloud,
 Ubuntu 24.04 LTS) a spouští se jedním příkazem.
 
