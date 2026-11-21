@@ -3,7 +3,6 @@
 Kompletní IoT řetězec od senzoru po dashboard: ESP32 měří CO₂, teplotu a vlhkost,
 posílá je přes MQTT do cloudu, Node-RED je zpracuje a uloží do PostgreSQL
 a Grafana z nich kreslí živé dashboardy.
-
 ![Dashboard](docs/dashboard.png)
 
 Celý serverový stack běží v Dockeru na jednom virtuálním serveru (Google Cloud,
@@ -42,14 +41,14 @@ Spojení do cloudu navazuje vždy zařízení, takže doma není potřeba oteví
 
 ## Komponenty
 
-| Služba     | K čemu                                  | Port   |
-|------------|-----------------------------------------|--------|
-| Mosquitto  | MQTT broker, příjem dat ze zařízení     | 1883   |
-| Node-RED   | zpracování zpráv a zápis do DB          | 1880   |
-| PostgreSQL | ukládání měření                         | – (jen interně) |
-| Grafana    | dashboardy a vizualizace                | 3000   |
-| pgAdmin    | webová správa databáze                  | 5050   |
-| Portainer  | webová správa Docker kontejnerů         | 9443   |
+| Služba     | K čemu                                  | Port   | Dostupnost |
+|------------|-----------------------------------------|--------|------------|
+| Mosquitto  | MQTT broker, příjem dat ze zařízení     | 1883   | internet (heslo + ACL) |
+| Grafana    | dashboardy a vizualizace                | 3000   | internet (přihlášení) |
+| Node-RED   | zpracování zpráv a zápis do DB          | 1880   | jen SSH tunel |
+| pgAdmin    | webová správa databáze                  | 5050   | jen SSH tunel |
+| Portainer  | webová správa Docker kontejnerů         | 9443   | jen SSH tunel |
+| PostgreSQL | ukládání měření                         | 5432   | jen interní Docker síť |
 
 ## Datový kontrakt
 
@@ -84,7 +83,7 @@ Spojení do cloudu navazuje vždy zařízení, takže doma není potřeba oteví
 ### 1. Server
 
 - VM s Ubuntu 24.04 LTS (stačí e2-small: 2 vCPU, 2 GB RAM, 20 GB disk)
-- Ve firewallu povolené příchozí TCP porty: `22, 1880, 1883, 3000, 5050, 9443`
+- Ve firewallu povolené příchozí TCP porty: `22, 1883, 3000` (nic dalšího!)
 - Docker:
 
 ```bash
@@ -103,7 +102,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ### 2. Repozitář a hesla
 
 ```bash
-git clone https://github.com/<uzivatel>/iot-stack.git
+git clone https://github.com/<ljmonkey44-cmd>/iot-stack.git
 cd iot-stack
 cp .env.example .env
 nano .env          # doplnit hesla (openssl rand -hex 12)
@@ -128,17 +127,30 @@ docker compose up -d
 docker compose ps
 ```
 
-### 5. Konfigurace v aplikacích
+### 5. Přístup k administraci (SSH tunel)
 
-- **Portainer** (`https://IP:9443`) – do 5 minut od startu vytvořit admin účet.
-- **Node-RED** (`http://IP:1880`) – nainstalovat `node-red-contrib-postgresql`
+Node-RED, pgAdmin a Portainer poslouchají jen na `127.0.0.1` serveru,
+takže z internetu nejsou vidět. Připojíš se k nim přes SSH tunel:
+
+```powershell
+ssh -i ~/.ssh/gcp_key -L 1880:localhost:1880 -L 5050:localhost:5050 -L 9443:localhost:9443 uzivatel@IP
+```
+
+Dokud je okno otevřené, fungují v prohlížeči:
+`http://localhost:1880` (Node-RED), `http://localhost:5050` (pgAdmin),
+`https://localhost:9443` (Portainer).
+
+### 6. Konfigurace v aplikacích
+
+- **Portainer** (`https://localhost:9443`) – do 5 minut od startu vytvořit admin účet.
+- **Node-RED** (`http://localhost:1880`) – nainstalovat `node-red-contrib-postgresql`
   a importovat flow ze složky [`nodered/`](nodered/).
   Připojení: MQTT broker `mosquitto:1883` (uživatel `nodered`),
   databáze `postgres:5432 / iot_db` (uživatel `postgres`, SSL vypnuto).
 - **Grafana** (`http://IP:3000`) – přidat data source PostgreSQL
   (`postgres:5432`, `iot_db`, SSL `disable`) a importovat dashboard
   ze složky [`grafana/dashboards/`](grafana/dashboards/).
-- **pgAdmin** (`http://IP:5050`) – zaregistrovat server s hostem `postgres`.
+- **pgAdmin** (`http://localhost:5050`) – zaregistrovat server s hostem `postgres`.
 
 ## Užitečné příkazy
 
@@ -161,7 +173,10 @@ docker exec postgres pg_dump -U postgres iot_db > backup_$(date +%F).sql
   jsou v `.gitignore`.
 - MQTT bez anonymního přístupu, každé zařízení má vlastního uživatele
   a ACL omezuje zápis jen do jeho topicu.
-- PostgreSQL není publikovaný do internetu.
+- PostgreSQL není publikovaný vůbec, Node-RED, pgAdmin a Portainer jen na
+  localhost (přístup přes SSH tunel). Do internetu jsou otevřené jen
+  MQTT, Grafana a SSH.
+- Poučení z reálného incidentu: [`docs/INCIDENT.md`](docs/INCIDENT.md).
 
 ## Další rozvoj
 
