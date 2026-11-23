@@ -19,6 +19,11 @@ zasaženy nebyly. Následkem byl výpadek zápisu dat přibližně na 15 hodin.
 | 21. 11. ~10:35   | Node-RED zastaven, port 1880 odebrán z firewallu |
 | 21. 11. ~11:00   | obnova a změna hesel dokončena, data opět tečou |
 
+![Průběh útoku: CPU, síťový provoz a nová spojení](incident-graf.png)
+
+Na grafech je vidět špička CPU na 100 %, odchozí provoz až ~9 MiB/s
+a stovky nových spojení za sekundu. Po zastavení Node-RED provoz klesl na nulu.
+
 ## Co útočník udělal
 
 - Smazal původní flow a vytvořil záložku „Persist“ s uzlem `exec`.
