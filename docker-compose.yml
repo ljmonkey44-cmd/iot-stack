@@ -1,4 +1,4 @@
-# IoT stack: ESP32 -> MQTT -> Node-RED -> PostgreSQL -> Grafana
+# IoT stack: ESP32 -> MQTT -> Node-RED -> PostgreSQL -> Grafana (za Caddy s HTTPS)
 # Spuštění:  docker compose up -d
 # Hesla a citlivé údaje jsou v souboru .env (vzor: .env.example)
 
@@ -54,16 +54,35 @@ services:
     image: grafana/grafana
     container_name: grafana
     restart: unless-stopped
+    # ven jde jen přes Caddy (HTTPS); localhost pro SSH tunel
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       # platí jen při úplně prvním startu (prázdný volume)
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: https://${DOMAIN}/
     volumes:
       - grafana_data:/var/lib/grafana
     depends_on:
       postgres:
         condition: service_healthy
+
+  # --- HTTPS reverse proxy -------------------------------------------------
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - grafana
 
   # --- Správa DB (webové GUI) ------------------------------------------------
   pgadmin:
@@ -107,3 +126,7 @@ volumes:
     name: pgadmin_data
   portainer_data:
     name: portainer_data
+  caddy_data:
+    name: caddy_data
+  caddy_config:
+    name: caddy_config

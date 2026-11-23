@@ -1,0 +1,6 @@
+# Reverse proxy s automatickým HTTPS (Let's Encrypt).
+# Doména se bere z proměnné DOMAIN v souboru .env.
+
+{$DOMAIN} {
+	reverse_proxy grafana:3000
+}
