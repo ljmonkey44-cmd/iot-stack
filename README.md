@@ -3,6 +3,7 @@
 Kompletní IoT řetězec od senzoru po dashboard: ESP32 měří CO₂, teplotu a vlhkost,
 posílá je přes MQTT do cloudu, Node-RED je zpracuje a uloží do PostgreSQL
 a Grafana z nich kreslí živé dashboardy.
+
 ![Dashboard](docs/dashboard.png)
 
 Celý serverový stack běží v Dockeru na jednom virtuálním serveru (Google Cloud,
@@ -12,6 +13,8 @@ Ubuntu 24.04 LTS) a spouští se jedním příkazem.
 
 ```mermaid
 flowchart LR
+    U["Prohlížeč"]
+
     subgraph Domov
         S["ESP32-S3 + SCD41<br/>(Stolní společník)"]
         HA["Home Assistant<br/>(lokální MQTT)"]
@@ -21,6 +24,7 @@ flowchart LR
         M["Mosquitto<br/>MQTT broker"]
         N["Node-RED<br/>zpracování"]
         P[("PostgreSQL<br/>iot_db")]
+        C["Caddy<br/>HTTPS proxy"]
         G["Grafana<br/>dashboardy"]
         A["pgAdmin"]
         PT["Portainer"]
@@ -32,6 +36,8 @@ flowchart LR
     N -- "INSERT" --> P
     P --> G
     P --> A
+    U -- "HTTPS :443" --> C
+    C --> G
 ```
 
 Zařízení má dvě nezávislá MQTT spojení: jedno do lokálního Home Assistantu
@@ -44,7 +50,8 @@ Spojení do cloudu navazuje vždy zařízení, takže doma není potřeba oteví
 | Služba     | K čemu                                  | Port   | Dostupnost |
 |------------|-----------------------------------------|--------|------------|
 | Mosquitto  | MQTT broker, příjem dat ze zařízení     | 1883   | internet (heslo + ACL) |
-| Grafana    | dashboardy a vizualizace                | 3000   | internet (přihlášení) |
+| Caddy      | reverse proxy, automatický HTTPS certifikát | 80, 443 | internet |
+| Grafana    | dashboardy a vizualizace                | 3000   | jen přes Caddy (HTTPS + přihlášení) |
 | Node-RED   | zpracování zpráv a zápis do DB          | 1880   | jen SSH tunel |
 | pgAdmin    | webová správa databáze                  | 5050   | jen SSH tunel |
 | Portainer  | webová správa Docker kontejnerů         | 9443   | jen SSH tunel |
@@ -83,7 +90,8 @@ Spojení do cloudu navazuje vždy zařízení, takže doma není potřeba oteví
 ### 1. Server
 
 - VM s Ubuntu 24.04 LTS (stačí e2-small: 2 vCPU, 2 GB RAM, 20 GB disk)
-- Ve firewallu povolené příchozí TCP porty: `22, 1883, 3000` (nic dalšího!)
+- Ve firewallu povolené příchozí TCP porty: `22, 80, 443, 1883` (nic dalšího!)
+- Doména, která ukazuje na IP serveru (stačí zdarma, např. [DuckDNS](https://www.duckdns.org))
 - Docker:
 
 ```bash
@@ -102,10 +110,10 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ### 2. Repozitář a hesla
 
 ```bash
-git clone https://github.com/<ljmonkey44-cmd>/iot-stack.git
+git clone https://github.com/ljmonkey44-cmd/iot-stack.git
 cd iot-stack
 cp .env.example .env
-nano .env          # doplnit hesla (openssl rand -hex 12)
+nano .env          # doplnit DOMAIN a hesla (openssl rand -hex 12)
 ```
 
 ### 3. Uživatelé MQTT
@@ -117,7 +125,7 @@ docker run --rm -v ./mosquitto/config:/mosquitto/config eclipse-mosquitto:2 \
   mosquitto_passwd -b /mosquitto/config/passwd nodered 'HESLO_NODERED'
 
 sudo chown -R 1883:1883 mosquitto/config
-sudo chmod 0700 mosquitto/config/passwd mosquitto/config/acl
+sudo chmod 0600 mosquitto/config/passwd
 ```
 
 ### 4. Spuštění
@@ -125,7 +133,11 @@ sudo chmod 0700 mosquitto/config/passwd mosquitto/config/acl
 ```bash
 docker compose up -d
 docker compose ps
+docker compose logs caddy | grep -i "certificate obtained"   # HTTPS certifikát
 ```
+
+Grafana je pak dostupná na `https://DOMENA` (Caddy si certifikát
+od Let's Encrypt vyřídí a obnovuje sám).
 
 ### 5. Přístup k administraci (SSH tunel)
 
@@ -134,6 +146,18 @@ takže z internetu nejsou vidět. Připojíš se k nim přes SSH tunel:
 
 ```powershell
 ssh -i ~/.ssh/gcp_key -L 1880:localhost:1880 -L 5050:localhost:5050 -L 9443:localhost:9443 uzivatel@IP
+```
+
+Pohodlnější je uložit si tunel do `~/.ssh/config` a připojovat se jen `ssh iot`:
+
+```
+Host iot
+    HostName IP_SERVERU
+    User uzivatel
+    IdentityFile ~/.ssh/gcp_key
+    LocalForward 1880 localhost:1880
+    LocalForward 5050 localhost:5050
+    LocalForward 9443 localhost:9443
 ```
 
 Dokud je okno otevřené, fungují v prohlížeči:
@@ -147,7 +171,7 @@ Dokud je okno otevřené, fungují v prohlížeči:
   a importovat flow ze složky [`nodered/`](nodered/).
   Připojení: MQTT broker `mosquitto:1883` (uživatel `nodered`),
   databáze `postgres:5432 / iot_db` (uživatel `postgres`, SSL vypnuto).
-- **Grafana** (`http://IP:3000`) – přidat data source PostgreSQL
+- **Grafana** (`https://DOMENA`) – přidat data source PostgreSQL
   (`postgres:5432`, `iot_db`, SSL `disable`) a importovat dashboard
   ze složky [`grafana/dashboards/`](grafana/dashboards/).
 - **pgAdmin** (`http://localhost:5050`) – zaregistrovat server s hostem `postgres`.
@@ -175,13 +199,15 @@ docker exec postgres pg_dump -U postgres iot_db > backup_$(date +%F).sql
   a ACL omezuje zápis jen do jeho topicu.
 - PostgreSQL není publikovaný vůbec, Node-RED, pgAdmin a Portainer jen na
   localhost (přístup přes SSH tunel). Do internetu jsou otevřené jen
-  MQTT, Grafana a SSH.
+  MQTT, SSH a Caddy (80/443).
+- Grafana je dostupná jen přes HTTPS (Caddy + Let's Encrypt), přihlašovací
+  údaje tak neputují internetem v čitelné podobě.
 - Poučení z reálného incidentu: [`docs/INCIDENT.md`](docs/INCIDENT.md).
 
 ## Další rozvoj
 
 - [ ] TLS pro MQTT (port 8883) – firmware je připravený
-- [ ] Doména a HTTPS (Let's Encrypt) pro Grafanu
+- [x] Doména a HTTPS (Let's Encrypt) pro Grafanu
 - [ ] Data z Aqara FP2 (přítomnost) přes Home Assistant `mqtt_statestream`
 - [ ] TimescaleDB pro efektivní práci s časovými řadami
 - [ ] Panel online/offline stavu zařízení
